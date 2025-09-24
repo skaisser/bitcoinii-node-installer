@@ -20,6 +20,15 @@ LEAVE_HEADROOM_MB=3000   # Keep at least this much free disk
 ADDNODES=("us.bitcoinii.info:8338" "bitcoinii.ddns.net:8338")
 # ------------------------------------------------
 
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+NC='\033[0m' # No Color
+
 # Resolve run user/home when running via sudo
 if [[ ${SUDO_USER:-} ]]; then RUN_USER="$SUDO_USER"; else RUN_USER="$(whoami)"; fi
 RUN_HOME="$(getent passwd "$RUN_USER" | cut -d: -f6 || true)"
@@ -31,11 +40,14 @@ BIN_DAEMON="$DATADIR/bitcoinIId"
 BIN_CLI="$DATADIR/bitcoinII-cli"
 
 timestamp() { date +%Y%m%d-%H%M%S; }
-say() { echo -e "[bitcoinii] $*"; }
+say() { echo -e "${BLUE}[BitcoinII]${NC} $*"; }
+success() { echo -e "${GREEN}✓${NC} $*"; }
+error() { echo -e "${RED}✗${NC} $*"; }
+info() { echo -e "${CYAN}ℹ${NC} $*"; }
 
 need_root() {
   if [[ ${EUID:-$(id -u)} -ne 0 ]]; then
-    echo "This installer must run with root privileges (sudo)." >&2
+    error "This installer must run with root privileges (sudo)."
     exit 1
   fi
 }
@@ -98,10 +110,10 @@ calc_tunables() {
 }
 
 prompt_mode() {
-  echo "Select mode:";
-  echo "  1) Mining (pruned, wallet off, blocksonly) [recommended]";
-  echo "  2) Full node (no prune, wallet on, accepts txs)";
-  read -rp "Enter 1 or 2 [1]: " MODE
+  echo -e "\n${BOLD}${CYAN}Select BitcoinII Node Mode:${NC}\n";
+  echo -e "  ${YELLOW}1)${NC} ${BOLD}Mining Node${NC} (pruned, optimized for mining) ${GREEN}[recommended]${NC}";
+  echo -e "  ${YELLOW}2)${NC} ${BOLD}Full Node${NC} (complete blockchain, transaction indexing)\n";
+  read -rp "$(echo -e ${CYAN}"Enter your choice [1 or 2]:"${NC} ) " MODE
   MODE=${MODE:-1}
   if [[ "$MODE" != "1" && "$MODE" != "2" ]]; then MODE=1; fi
 }
@@ -110,30 +122,46 @@ main() {
   need_root
   ensure_tools
 
-  say "Preparing directories at $DATADIR"
+  echo -e "\n${BOLD}${GREEN}╔══════════════════════════════════════════╗${NC}"
+  echo -e "${BOLD}${GREEN}║     BitcoinII Smart Node Installer      ║${NC}"
+  echo -e "${BOLD}${GREEN}╚══════════════════════════════════════════╝${NC}\n"
+
+  say "${BOLD}Preparing installation...${NC}"
+  info "Creating directories at $DATADIR"
   mkdir -p "$DATADIR"
   chown -R "$RUN_USER":"$RUN_USER" "$DATADIR"
+  success "Directories prepared"
 
   # Download and extract release
   TMPD="$(mktemp -d)"
   TAR="$TMPD/BitcoinII.tar.gz"
-  say "Downloading release…"
-  wget -qO "$TAR" "$RELEASE_URL"
-  say "Extracting…"
-  tar -xzf "$TAR" -C "$TMPD"
+  say "${BOLD}Downloading BitcoinII v29.0.0...${NC}"
+  info "Source: ${RELEASE_URL##*/}"
+  wget --progress=bar:force:noscroll -O "$TAR" "$RELEASE_URL" 2>&1 | grep --line-buffered "%" | sed -u 's/^.*\r//'
+  success "Download complete"
+
+  say "${BOLD}Extracting files...${NC}"
+  tar -xvf "$TAR" -C "$TMPD" | while read -r file; do
+    echo -ne "\r${CYAN}Extracting: ${NC}$(basename "$file")                    "
+  done
+  echo -ne "\r"
+  success "Extraction complete"
 
   # Find daemon and cli in extracted tree
   SRC_DAEMON=$(find "$TMPD" -type f -name 'bitcoinIId' | head -1 || true)
   SRC_CLI=$(find "$TMPD" -type f -name 'bitcoinII-cli' | head -1 || true)
   if [[ -z "$SRC_DAEMON" || -z "$SRC_CLI" ]]; then
-    echo "Could not locate bitcoinIId or bitcoinII-cli in the tarball." >&2
+    error "Could not locate bitcoinIId or bitcoinII-cli in the tarball."
     exit 1
   fi
 
+  say "${BOLD}Installing BitcoinII binaries...${NC}"
   install -m 0755 "$SRC_DAEMON" "$BIN_DAEMON"
   install -m 0755 "$SRC_CLI" "$BIN_CLI"
+  success "Binaries installed"
 
   # Remove GUI/wallet binaries if present in datadir
+  info "Cleaning up unnecessary files..."
   rm -f "$DATADIR/bitcoinII-qt" "$DATADIR/bitcoinII-wallet" 2>/dev/null || true
 
   # Decide ports avoiding conflicts with Bitcoin Core
@@ -144,7 +172,13 @@ main() {
   ZMQ_HASHTX_PORT="$ZMQ_HASHTX_PORT_DEFAULT"
   ZMQ_HASHBLOCK_PORT="$ZMQ_HASHBLOCK_PORT_DEFAULT"
 
+  say "${BOLD}Analyzing system resources...${NC}"
   calc_tunables
+  info "CPU Cores: ${CPU_CORES}"
+  info "Available RAM: ${MEM_AVAIL_MB} MB"
+  info "Available Disk: ${DISK_AVAIL_MB} MB"
+  success "System analysis complete"
+
   prompt_mode
 
   RPC_USER="bitcoinII"
@@ -153,14 +187,18 @@ main() {
   # Backup existing config if present
   if [[ -f "$CONF" ]]; then
     cp -a "$CONF" "$CONF.bak.$(timestamp)"
-    say "Backed up existing config to $CONF.bak.$(timestamp)"
+    info "Backed up existing config to $CONF.bak.$(timestamp)"
   fi
 
   # Local subnet
   LOCAL_SUBNET="${LOCAL_SUBNET_DEFAULT}"
 
   # Generate config
-  say "Writing configuration to $CONF"
+  say "${BOLD}Generating optimized configuration...${NC}"
+  info "Mode: $([[ "$MODE" == "1" ]] && echo "Mining Node (Pruned)" || echo "Full Node")"
+  info "Database Cache: ${DBCACHE} MB"
+  info "Memory Pool: ${MAXMEMPOOL} MB"
+  info "CPU Threads: ${PAR}"
   su - "$RUN_USER" -c "cat > '$CONF'" <<EOF
 # ---- BitcoinII auto-generated ----
 # Generated: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
@@ -233,10 +271,12 @@ EOF
 
   chown "$RUN_USER":"$RUN_USER" "$CONF"
   chmod 600 "$CONF"
+  success "Configuration written to $CONF"
 
   # Create systemd service
   SERVICE_FILE="/etc/systemd/system/bitcoiniid.service"
-  say "Installing systemd service to $SERVICE_FILE"
+  say "${BOLD}Setting up systemd service...${NC}"
+  info "Service file: $SERVICE_FILE"
   systemctl stop bitcoiniid >/dev/null 2>&1 || true
   cat > "$SERVICE_FILE" <<EOF
 [Unit]
@@ -285,10 +325,19 @@ EOF
 
   systemctl daemon-reload
   systemctl enable bitcoiniid >/dev/null
+  success "Service enabled for automatic startup"
+
+  say "${BOLD}Starting BitcoinII daemon...${NC}"
   systemctl start bitcoiniid || true
+  sleep 2
+  if systemctl is-active --quiet bitcoiniid; then
+    success "BitcoinII daemon is running!"
+  else
+    error "Failed to start daemon. Check: journalctl -u bitcoiniid -n 50"
+  fi
 
   # Configure UFW (allow SSH, P2P; restrict RPC/ZMQ to local subnet)
-  say "Configuring UFW rules"
+  say "${BOLD}Configuring firewall (UFW)...${NC}"
   if ! command -v ufw >/dev/null 2>&1; then
     if command -v apt-get >/dev/null 2>&1; then
       apt-get update -y && apt-get install -y ufw
@@ -302,8 +351,10 @@ EOF
   ufw allow from ${LOCAL_SUBNET} to any port ${ZMQ_HASHTX_PORT} proto tcp >/dev/null 2>&1 || true
   ufw allow from ${LOCAL_SUBNET} to any port ${ZMQ_HASHBLOCK_PORT} proto tcp >/dev/null 2>&1 || true
   if ! ufw status | grep -q "Status: active"; then echo "y" | ufw enable >/dev/null; fi
+  success "Firewall configured and active"
 
-  # Create CLI wrappers globally (no prompt)
+  # Create CLI symlinks globally
+  say "${BOLD}Creating global CLI access...${NC}"
   tee /usr/local/bin/bitcoinii-cli >/dev/null <<'EOX'
 #!/usr/bin/env bash
 exec "$HOME/.bitcoinII/bitcoinII-cli" -datadir="$HOME/.bitcoinII" -conf="$HOME/.bitcoinII/bitcoinII.conf" "$@"
@@ -314,24 +365,39 @@ EOX
 exec "$HOME/.bitcoinII/bitcoinII-cli" -datadir="$HOME/.bitcoinII" -conf="$HOME/.bitcoinII/bitcoinII.conf" "$@"
 EOY
   chmod +x /usr/local/bin/bitcoinII-cli
+  success "CLI commands available globally"
 
-  say "=== Summary ==="
-  echo "User:        $RUN_USER ($RUN_HOME)"
-  echo "Datadir:     $DATADIR"
-  echo "Config:      $CONF"
-  echo "Service:     $SERVICE_FILE"
-  echo "Mode:        $([[ "$MODE" == "1" ]] && echo Mining/Pruned || echo Full Node)"
-  echo "P2P:         $P2P_PORT | RPC: $RPC_PORT | ZMQ: $ZMQ_BLOCK_PORT,$ZMQ_HASHTX_PORT,$ZMQ_HASHBLOCK_PORT"
-  echo "RPC creds:   rpcuser=$RPC_USER rpcpassword=$RPC_PASS"
-  echo
-  echo "Useful commands:"
-  echo "  systemctl status bitcoiniid --no-pager"
-  echo "  journalctl -u bitcoiniid -f"
-  echo "  bitcoinII-cli -getinfo"
-  echo "  bitcoinII-cli getblockchaininfo"
+  echo -e "\n${BOLD}${GREEN}╔══════════════════════════════════════════════════════╗${NC}"
+  echo -e "${BOLD}${GREEN}║          Installation Complete! 🎉                    ║${NC}"
+  echo -e "${BOLD}${GREEN}╚══════════════════════════════════════════════════════╝${NC}\n"
+
+  echo -e "${BOLD}${CYAN}Configuration Summary:${NC}"
+  echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+  echo -e "${BOLD}User:${NC}        $RUN_USER ($RUN_HOME)"
+  echo -e "${BOLD}Data Dir:${NC}    $DATADIR"
+  echo -e "${BOLD}Config:${NC}      $CONF"
+  echo -e "${BOLD}Service:${NC}     $SERVICE_FILE"
+  echo -e "${BOLD}Node Mode:${NC}   $([[ "$MODE" == "1" ]] && echo -e "${YELLOW}Mining Node (Pruned)${NC}" || echo -e "${GREEN}Full Node${NC}")"
+  echo -e "\n${BOLD}${CYAN}Network Configuration:${NC}"
+  echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+  echo -e "${BOLD}P2P Port:${NC}    $P2P_PORT"
+  echo -e "${BOLD}RPC Port:${NC}    $RPC_PORT"
+  echo -e "${BOLD}ZMQ Ports:${NC}   $ZMQ_BLOCK_PORT, $ZMQ_HASHTX_PORT, $ZMQ_HASHBLOCK_PORT"
+  echo -e "\n${BOLD}${RED}⚠️  IMPORTANT - Save These RPC Credentials:${NC}"
+  echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+  echo -e "${BOLD}RPC User:${NC}     ${YELLOW}$RPC_USER${NC}"
+  echo -e "${BOLD}RPC Password:${NC} ${YELLOW}$RPC_PASS${NC}"
+  echo -e "\n${BOLD}${CYAN}Useful Commands:${NC}"
+  echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+  echo -e "${GREEN}Check service status:${NC}  systemctl status bitcoiniid --no-pager"
+  echo -e "${GREEN}View live logs:${NC}        journalctl -u bitcoiniid -f"
+  echo -e "${GREEN}Node info:${NC}             bitcoinII-cli -getinfo"
+  echo -e "${GREEN}Blockchain status:${NC}     bitcoinII-cli getblockchaininfo"
   if [[ "$MODE" == "2" ]]; then
-    echo "  bitcoinII-cli getindexinfo  # shows txindex sync"
+    echo -e "${GREEN}Transaction index:${NC}     bitcoinII-cli getindexinfo"
   fi
+  echo -e "\n${BOLD}${GREEN}✓ BitcoinII node is now running!${NC}"
+  echo -e "${CYAN}Monitor initial sync with:${NC} journalctl -u bitcoiniid -f\n"
 }
 
 main "$@"
