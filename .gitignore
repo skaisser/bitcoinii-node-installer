@@ -1,0 +1,47 @@
+# --- OS artifacts ---
+.DS_Store
+Thumbs.db
+Icon?
+
+# --- Editors/IDEs ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# --- Logs and runtime ---
+*.log
+*.pid
+*.seed
+.cache/
+tmp/
+temp/
+out/
+dist/
+build/
+bin/
+
+# --- Archives & dumps ---
+*.tar
+*.tar.gz
+*.tgz
+*.gz
+*.zip
+*.bz2
+*.xz
+*.7z
+*.rar
+*.dump
+
+# --- Env & secrets (never commit secrets) ---
+.env
+.env.*
+*.pem
+*.key
+*.crt
+
+# --- Repo-specific ---
+# Ignore local changes to the contributor guide if desired
+AGENTS.md
+
