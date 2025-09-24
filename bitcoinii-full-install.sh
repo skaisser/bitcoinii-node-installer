@@ -110,10 +110,11 @@ calc_tunables() {
 }
 
 prompt_mode() {
-  echo -e "\n${BOLD}${CYAN}Select BitcoinII Node Mode:${NC}\n";
-  echo -e "  ${YELLOW}1)${NC} ${BOLD}Mining Node${NC} (pruned, optimized for mining) ${GREEN}[recommended]${NC}";
-  echo -e "  ${YELLOW}2)${NC} ${BOLD}Full Node${NC} (complete blockchain, transaction indexing)\n";
-  read -rp "$(echo -e ${CYAN}"Enter your choice [1 or 2]:"${NC} ) " MODE
+  echo -e "\n${BOLD}${CYAN}Select BitcoinII Node Mode:${NC}\n"
+  echo -e "  ${YELLOW}1)${NC} ${BOLD}Mining Node${NC} (pruned, optimized for mining) ${GREEN}[recommended]${NC}"
+  echo -e "  ${YELLOW}2)${NC} ${BOLD}Full Node${NC} (complete blockchain, transaction indexing)\n"
+  echo -ne "${CYAN}Enter your choice [1 or 2]: ${NC}"
+  read -r MODE
   MODE=${MODE:-1}
   if [[ "$MODE" != "1" && "$MODE" != "2" ]]; then MODE=1; fi
 }
@@ -137,14 +138,18 @@ main() {
   TAR="$TMPD/BitcoinII.tar.gz"
   say "${BOLD}Downloading BitcoinII v29.0.0...${NC}"
   info "Source: ${RELEASE_URL##*/}"
-  wget --progress=bar:force:noscroll -O "$TAR" "$RELEASE_URL" 2>&1 | grep --line-buffered "%" | sed -u 's/^.*\r//'
-  success "Download complete"
+  echo -e "${CYAN}This may take a moment depending on your connection speed...${NC}"
+  wget --show-progress --progress=bar:force:noscroll -O "$TAR" "$RELEASE_URL"
+  success "Download complete ($(du -h "$TAR" | cut -f1))"
 
   say "${BOLD}Extracting files...${NC}"
-  tar -xvf "$TAR" -C "$TMPD" | while read -r file; do
-    echo -ne "\r${CYAN}Extracting: ${NC}$(basename "$file")                    "
+  echo -e "${CYAN}Processing archive...${NC}"
+  tar -xvf "$TAR" -C "$TMPD" 2>&1 | while read -r line; do
+    if [[ $((RANDOM % 10)) -eq 0 ]]; then
+      echo -ne "\r${CYAN}Extracting: ${NC}$(basename "$line" 2>/dev/null | cut -c1-50)...                    "
+    fi
   done
-  echo -ne "\r"
+  echo -ne "\r                                                                          \r"
   success "Extraction complete"
 
   # Find daemon and cli in extracted tree
