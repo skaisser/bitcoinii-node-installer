@@ -88,39 +88,44 @@ next_free_port() { # start_port
 RAND() { tr -dc 'A-Za-z0-9' </dev/urandom | head -c "${1:-24}"; echo; }
 
 calc_tunables() {
-  # Get CPU cores
+  # Get CPU cores - simplified
   CPU_CORES=$(nproc 2>/dev/null || echo 2)
 
-  # Get memory info
+  # Get memory info - simplified without debug output
   if command -v free >/dev/null 2>&1; then
-    MEM_TOTAL_MB=$(free -m 2>/dev/null | awk '/^Mem:/{print $2}' | head -1 || echo 2048)
-    MEM_AVAIL_MB=$(free -m 2>/dev/null | awk '/^Mem:/{print $7}' | head -1 || echo 1024)
+    MEM_TOTAL_MB=$(free -m 2>/dev/null | awk '/^Mem:/{print $2}' | head -1)
+    # Try column 7 for available, fallback to column 4 for free
+    MEM_AVAIL_MB=$(free -m 2>/dev/null | awk '/^Mem:/{if ($7) print $7; else print $4}' | head -1)
+    # Ensure we have valid values
+    : ${MEM_TOTAL_MB:=2048}
+    : ${MEM_AVAIL_MB:=1024}
   else
     MEM_TOTAL_MB=2048
     MEM_AVAIL_MB=1024
   fi
 
   # Get disk space
-  DISK_AVAIL_MB=$(df -m "$RUN_HOME" 2>/dev/null | awk 'NR==2{print $4}' | head -1 || echo 10000)
+  DISK_AVAIL_MB=$(df -m "$RUN_HOME" 2>/dev/null | awk 'NR==2{print $4}' | head -1)
+  : ${DISK_AVAIL_MB:=10000}
 
-  # Calculate optimized settings
-  DBCACHE=$(( MEM_AVAIL_MB / 4 ))
-  (( DBCACHE < 450 )) && DBCACHE=450
-  (( DBCACHE > 4096 )) && DBCACHE=4096
+  # Calculate optimized settings with safer arithmetic
+  DBCACHE=$((MEM_AVAIL_MB / 4))
+  if [ "$DBCACHE" -lt 450 ]; then DBCACHE=450; fi
+  if [ "$DBCACHE" -gt 4096 ]; then DBCACHE=4096; fi
 
-  MAXMEMPOOL=$(( MEM_AVAIL_MB / 12 ))
-  (( MAXMEMPOOL < 200 )) && MAXMEMPOOL=200
+  MAXMEMPOOL=$((MEM_AVAIL_MB / 12))
+  if [ "$MAXMEMPOOL" -lt 200 ]; then MAXMEMPOOL=200; fi
 
-  PAR=$(( CPU_CORES - 1 ))
-  (( PAR < 1 )) && PAR=1
+  PAR=$((CPU_CORES - 1))
+  if [ "$PAR" -lt 1 ]; then PAR=1; fi
 
-  if (( DISK_AVAIL_MB > LEAVE_HEADROOM_MB + 1000 )); then
-    PRUNE_MB=$(( DISK_AVAIL_MB - LEAVE_HEADROOM_MB ))
+  if [ "$DISK_AVAIL_MB" -gt $((LEAVE_HEADROOM_MB + 1000)) ]; then
+    PRUNE_MB=$((DISK_AVAIL_MB - LEAVE_HEADROOM_MB))
   else
     PRUNE_MB=550
   fi
-  (( PRUNE_MB < 550 )) && PRUNE_MB=550
-  (( PRUNE_MB > 200000 )) && PRUNE_MB=200000
+  if [ "$PRUNE_MB" -lt 550 ]; then PRUNE_MB=550; fi
+  if [ "$PRUNE_MB" -gt 200000 ]; then PRUNE_MB=200000; fi
 }
 
 prompt_mode() {
