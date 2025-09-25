@@ -45,6 +45,11 @@ success() { echo -e "${GREEN}✓${NC} $*"; }
 error() { echo -e "${RED}✗${NC} $*"; }
 info() { echo -e "${CYAN}ℹ${NC} $*"; }
 
+# CLI options (defaults)
+ASSUME_YES=0
+MODE_FLAG=""           # mining|full
+SUBNET_FLAG=""         # auto|local-only|CIDR
+
 need_root() {
   if [[ ${EUID:-$(id -u)} -ne 0 ]]; then
     error "This installer must run with root privileges (sudo)."
@@ -87,15 +92,36 @@ next_free_port() { # start_port
 
 RAND() { tr -dc 'A-Za-z0-9' </dev/urandom | head -c "${1:-24}"; echo; }
 
+# Safe timeout wrapper (no-op if timeout not available)
+to() {
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "$@"
+  else
+    shift $(( $# - ($#) )) # no-op; run command directly
+    "$@"
+  fi
+}
+
+detect_subnet() {
+  local ip subnet_base
+  ip=$(ip -4 addr show 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '127.0.0.1' | head -1)
+  if [[ -n "$ip" ]]; then
+    subnet_base=$(echo "$ip" | cut -d. -f1-3)
+    echo "${subnet_base}.0/24"
+  else
+    echo "$LOCAL_SUBNET_DEFAULT"
+  fi
+}
+
 calc_tunables() {
   # Get CPU cores - simplified
-  CPU_CORES=$(nproc 2>/dev/null || echo 2)
+  CPU_CORES=$(to 2s nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)
 
   # Get memory info - simplified without debug output
   if command -v free >/dev/null 2>&1; then
-    MEM_TOTAL_MB=$(free -m 2>/dev/null | awk '/^Mem:/{print $2}' | head -1)
+    MEM_TOTAL_MB=$(to 2s free -m 2>/dev/null | awk '/^Mem:/{print $2}' | head -1)
     # Try column 7 for available, fallback to column 4 for free
-    MEM_AVAIL_MB=$(free -m 2>/dev/null | awk '/^Mem:/{if ($7) print $7; else print $4}' | head -1)
+    MEM_AVAIL_MB=$(to 2s free -m 2>/dev/null | awk '/^Mem:/{if ($7) print $7; else print $4}' | head -1)
     # Ensure we have valid values
     : ${MEM_TOTAL_MB:=2048}
     : ${MEM_AVAIL_MB:=1024}
@@ -105,7 +131,7 @@ calc_tunables() {
   fi
 
   # Get disk space
-  DISK_AVAIL_MB=$(df -m "$RUN_HOME" 2>/dev/null | awk 'NR==2{print $4}' | head -1)
+  DISK_AVAIL_MB=$(to 3s df -Pm "$RUN_HOME" 2>/dev/null | awk 'NR==2{print $4}' | head -1)
   : ${DISK_AVAIL_MB:=10000}
 
   # Calculate optimized settings with safer arithmetic
@@ -126,6 +152,68 @@ calc_tunables() {
   fi
   if [ "$PRUNE_MB" -lt 550 ]; then PRUNE_MB=550; fi
   if [ "$PRUNE_MB" -gt 200000 ]; then PRUNE_MB=200000; fi
+
+  # Debug summary
+  info "Detected: CPU=$CPU_CORES cores, RAM=${MEM_TOTAL_MB}MB (avail ${MEM_AVAIL_MB}MB), DISK=${DISK_AVAIL_MB}MB"
+}
+
+usage() {
+  cat <<USAGE
+Usage: $0 [options]
+
+Options:
+  --mode <mining|full>       Choose node mode (mining = pruned, full = txindex on, no prune)
+  --subnet <auto|local-only|CIDR>
+                              RPC/ZMQ access: auto-detect /24, localhost only, or explicit CIDR (e.g., 192.168.1.0/24)
+  -y, --yes                  Non-interactive; assume Yes for prompts
+  -h, --help                 Show this help
+
+Examples:
+  sudo bash $0 --mode mining --subnet auto -y
+  sudo bash $0 --mode full --subnet local-only -y
+  curl -fsSL <raw-url> | sudo bash -s -- --mode mining --subnet 10.0.0.0/23 -y
+USAGE
+}
+
+parse_args() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --mode)
+        MODE_FLAG="${2:-}"; shift 2 || true ;;
+      --mode=*)
+        MODE_FLAG="${1#*=}"; shift ;;
+      --subnet)
+        SUBNET_FLAG="${2:-}"; shift 2 || true ;;
+      --subnet=*)
+        SUBNET_FLAG="${1#*=}"; shift ;;
+      -y|--yes)
+        ASSUME_YES=1; shift ;;
+      -h|--help)
+        usage; exit 0 ;;
+      *)
+        error "Unknown option: $1"; usage; exit 2 ;;
+    esac
+  done
+
+  # Normalize flags
+  if [[ -n "$MODE_FLAG" ]]; then
+    MODE_FLAG="${MODE_FLAG,,}"
+    if [[ "$MODE_FLAG" != "mining" && "$MODE_FLAG" != "full" ]]; then
+      error "--mode must be 'mining' or 'full'"; exit 2
+    fi
+  fi
+
+  if [[ -n "$SUBNET_FLAG" ]]; then
+    case "$SUBNET_FLAG" in
+      auto|local-only)
+        ;;
+      */*)
+        # rudimentary CIDR check
+        ;;
+      *)
+        error "--subnet must be 'auto', 'local-only', or CIDR (e.g., 192.168.1.0/24)"; exit 2 ;;
+    esac
+  fi
 }
 
 prompt_mode() {
@@ -209,6 +297,7 @@ prompt_network_settings() {
 }
 
 main() {
+  parse_args "$@"
   need_root
   ensure_tools
 
@@ -223,11 +312,14 @@ main() {
   echo -e "  ${GREEN}✓${NC} Configure firewall (UFW)"
   echo -e "  ${GREEN}✓${NC} Create global CLI access\n"
 
-  echo -ne "${BOLD}${CYAN}Ready to begin? [Y/n]: ${NC}"
-  read -r -t 30 CONFIRM || CONFIRM="Y"
-  if [[ "${CONFIRM,,}" == "n" ]]; then
-    echo -e "\n${YELLOW}Installation cancelled.${NC}\n"
-    exit 0
+  if [[ $ASSUME_YES -eq 0 ]]; then
+    echo -ne "${BOLD}${CYAN}Ready to begin? [Y/n]: ${NC}"
+    read -r -t 30 CONFIRM || CONFIRM="Y"
+    if [[ "${CONFIRM,,}" == "n" ]]; then
+      echo -e "\n${YELLOW}Installation cancelled.${NC}\n"; exit 0
+    fi
+  else
+    info "Running non-interactively (-y)."
   fi
 
   say "${BOLD}Preparing installation...${NC}"
@@ -301,8 +393,26 @@ main() {
   echo -ne "${CYAN}Press Enter to continue...${NC}"
   read -r -t 10
 
-  prompt_mode
-  prompt_network_settings
+  if [[ -n "$MODE_FLAG" ]]; then
+    MODE=$([[ "$MODE_FLAG" == "mining" ]] && echo 1 || echo 2)
+    info "Mode set via flag: $MODE_FLAG"
+  else
+    prompt_mode
+  fi
+
+  if [[ -n "$SUBNET_FLAG" ]]; then
+    case "$SUBNET_FLAG" in
+      auto)
+        LOCAL_SUBNET="$(detect_subnet)" ;;
+      local-only)
+        LOCAL_SUBNET="127.0.0.1/32" ;;
+      *)
+        LOCAL_SUBNET="$SUBNET_FLAG" ;;
+    esac
+    info "RPC/ZMQ subnet via flag: $LOCAL_SUBNET"
+  else
+    prompt_network_settings
+  fi
 
   RPC_USER="bitcoinII"
   RPC_PASS="$(RAND 28)"

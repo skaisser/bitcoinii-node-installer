@@ -33,6 +33,19 @@ wget -qO- https://raw.githubusercontent.com/skaisser/bitcoinii-node-installer/ma
 
 That's it! The smart installer will handle everything automatically.
 
+### Non‑Interactive Examples
+Run without prompts by passing flags after `-s --`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/skaisser/bitcoinii-node-installer/main/bitcoinii-full-install.sh \
+  | sudo bash -s -- --mode mining --subnet auto -y
+```
+
+```bash
+wget -qO- https://raw.githubusercontent.com/skaisser/bitcoinii-node-installer/main/bitcoinii-full-install.sh \
+  | sudo bash -s -- --mode full --subnet local-only -y
+```
+
 ## 🧠 Smart Installation Features
 
 This is not just another installer script. Our **SMART Installer** automatically:
@@ -129,8 +142,8 @@ The installer automatically implements enterprise-grade security:
 
 - **UFW Firewall Configuration**
   - SSH access preserved (never locked out)
-  - P2P port (8334) open for node communication
-  - RPC port (8333) restricted to local subnet only
+  - P2P port (8338) open for node communication (auto-checks for availability)
+  - RPC port (default 8332; auto-shifts if in use) restricted to local subnet only
   - ZMQ ports configured for local access only
 
 - **RPC Security**
