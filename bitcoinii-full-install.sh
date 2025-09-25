@@ -88,18 +88,32 @@ next_free_port() { # start_port
 RAND() { tr -dc 'A-Za-z0-9' </dev/urandom | head -c "${1:-24}"; echo; }
 
 calc_tunables() {
-  CPU_CORES=$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN || echo 2)
-  if command -v free >/dev/null 2>&1; then
-    MEM_TOTAL_MB=$(free -m | awk '/^Mem:/{print $2}')
-    MEM_AVAIL_MB=$(free -m | awk '/^Mem:/{print $7}')
-  else
-    MEM_TOTAL_MB=2048; MEM_AVAIL_MB=1024
-  fi
-  DISK_AVAIL_MB=$(df -m "$RUN_HOME" | awk 'NR==2{print $4}')
+  # Get CPU cores
+  CPU_CORES=$(nproc 2>/dev/null || echo 2)
 
-  DBCACHE=$(( MEM_AVAIL_MB / 4 )); (( DBCACHE < 450 )) && DBCACHE=450; (( DBCACHE > 4096 )) && DBCACHE=4096
-  MAXMEMPOOL=$(( MEM_AVAIL_MB / 12 )); (( MAXMEMPOOL < 200 )) && MAXMEMPOOL=200
-  PAR=$(( CPU_CORES - 1 )); (( PAR < 1 )) && PAR=1
+  # Get memory info
+  if command -v free >/dev/null 2>&1; then
+    MEM_TOTAL_MB=$(free -m 2>/dev/null | awk '/^Mem:/{print $2}' | head -1 || echo 2048)
+    MEM_AVAIL_MB=$(free -m 2>/dev/null | awk '/^Mem:/{print $7}' | head -1 || echo 1024)
+  else
+    MEM_TOTAL_MB=2048
+    MEM_AVAIL_MB=1024
+  fi
+
+  # Get disk space
+  DISK_AVAIL_MB=$(df -m "$RUN_HOME" 2>/dev/null | awk 'NR==2{print $4}' | head -1 || echo 10000)
+
+  # Calculate optimized settings
+  DBCACHE=$(( MEM_AVAIL_MB / 4 ))
+  (( DBCACHE < 450 )) && DBCACHE=450
+  (( DBCACHE > 4096 )) && DBCACHE=4096
+
+  MAXMEMPOOL=$(( MEM_AVAIL_MB / 12 ))
+  (( MAXMEMPOOL < 200 )) && MAXMEMPOOL=200
+
+  PAR=$(( CPU_CORES - 1 ))
+  (( PAR < 1 )) && PAR=1
+
   if (( DISK_AVAIL_MB > LEAVE_HEADROOM_MB + 1000 )); then
     PRUNE_MB=$(( DISK_AVAIL_MB - LEAVE_HEADROOM_MB ))
   else
@@ -110,13 +124,83 @@ calc_tunables() {
 }
 
 prompt_mode() {
-  echo -e "\n${BOLD}${CYAN}Select BitcoinII Node Mode:${NC}\n"
-  echo -e "  ${YELLOW}1)${NC} ${BOLD}Mining Node${NC} (pruned, optimized for mining) ${GREEN}[recommended]${NC}"
-  echo -e "  ${YELLOW}2)${NC} ${BOLD}Full Node${NC} (complete blockchain, transaction indexing)\n"
-  echo -ne "${CYAN}Enter your choice [1 or 2]: ${NC}"
-  read -r MODE
-  MODE=${MODE:-1}
-  if [[ "$MODE" != "1" && "$MODE" != "2" ]]; then MODE=1; fi
+  echo -e "\n${BOLD}${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+  echo -e "${BOLD}${CYAN}       Select BitcoinII Node Configuration${NC}"
+  echo -e "${BOLD}${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
+
+  echo -e "  ${YELLOW}[1]${NC} ${BOLD}⛏️  Mining Node${NC}"
+  echo -e "      ${CYAN}•${NC} Pruned blockchain (saves disk space)"
+  echo -e "      ${CYAN}•${NC} Optimized for mining operations"
+  echo -e "      ${CYAN}•${NC} Lower bandwidth usage"
+  echo -e "      ${GREEN}✓ Recommended for most users${NC}\n"
+
+  echo -e "  ${YELLOW}[2]${NC} ${BOLD}🌐 Full Node${NC}"
+  echo -e "      ${CYAN}•${NC} Complete blockchain history"
+  echo -e "      ${CYAN}•${NC} Transaction indexing enabled"
+  echo -e "      ${CYAN}•${NC} Requires ~500GB+ disk space"
+  echo -e "      ${CYAN}•${NC} For advanced users/services\n"
+
+  while true; do
+    echo -ne "${BOLD}${CYAN}Enter your choice [1 or 2, default=1]: ${NC}"
+    read -r -t 30 MODE || MODE="1"
+    MODE=${MODE:-1}
+
+    if [[ "$MODE" == "1" ]]; then
+      echo -e "\n${GREEN}✓${NC} Selected: ${BOLD}Mining Node${NC}\n"
+      break
+    elif [[ "$MODE" == "2" ]]; then
+      echo -e "\n${GREEN}✓${NC} Selected: ${BOLD}Full Node${NC}\n"
+      break
+    else
+      echo -e "${RED}Invalid choice. Please enter 1 or 2.${NC}"
+    fi
+  done
+}
+
+prompt_network_settings() {
+  echo -e "${BOLD}${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+  echo -e "${BOLD}${CYAN}          Network Configuration${NC}"
+  echo -e "${BOLD}${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
+
+  # Auto-detect local subnet
+  LOCAL_IP=$(ip -4 addr show 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '127.0.0.1' | head -1)
+  if [[ -n "$LOCAL_IP" ]]; then
+    SUBNET_BASE=$(echo "$LOCAL_IP" | cut -d. -f1-3)
+    DETECTED_SUBNET="${SUBNET_BASE}.0/24"
+    echo -e "${GREEN}✓${NC} Detected local network: ${CYAN}$DETECTED_SUBNET${NC}\n"
+  else
+    DETECTED_SUBNET="$LOCAL_SUBNET_DEFAULT"
+  fi
+
+  echo -e "Configure RPC access for local network?\n"
+  echo -e "  ${YELLOW}[1]${NC} ${BOLD}Use detected subnet${NC} ($DETECTED_SUBNET)"
+  echo -e "  ${YELLOW}[2]${NC} ${BOLD}Enter custom subnet${NC}"
+  echo -e "  ${YELLOW}[3]${NC} ${BOLD}Local only${NC} (127.0.0.1)\n"
+
+  echo -ne "${BOLD}${CYAN}Enter your choice [1-3, default=1]: ${NC}"
+  read -r -t 15 NET_CHOICE || NET_CHOICE="1"
+  NET_CHOICE=${NET_CHOICE:-1}
+
+  case "$NET_CHOICE" in
+    1)
+      LOCAL_SUBNET="$DETECTED_SUBNET"
+      echo -e "\n${GREEN}✓${NC} Using subnet: ${CYAN}$LOCAL_SUBNET${NC}\n"
+      ;;
+    2)
+      echo -ne "${CYAN}Enter subnet (e.g., 192.168.1.0/24): ${NC}"
+      read -r CUSTOM_SUBNET
+      LOCAL_SUBNET="${CUSTOM_SUBNET:-$DETECTED_SUBNET}"
+      echo -e "\n${GREEN}✓${NC} Using subnet: ${CYAN}$LOCAL_SUBNET${NC}\n"
+      ;;
+    3)
+      LOCAL_SUBNET="127.0.0.1/32"
+      echo -e "\n${GREEN}✓${NC} RPC access restricted to localhost only\n"
+      ;;
+    *)
+      LOCAL_SUBNET="$DETECTED_SUBNET"
+      echo -e "\n${GREEN}✓${NC} Using default: ${CYAN}$LOCAL_SUBNET${NC}\n"
+      ;;
+  esac
 }
 
 main() {
@@ -126,6 +210,20 @@ main() {
   echo -e "\n${BOLD}${GREEN}╔══════════════════════════════════════════╗${NC}"
   echo -e "${BOLD}${GREEN}║     BitcoinII Smart Node Installer      ║${NC}"
   echo -e "${BOLD}${GREEN}╚══════════════════════════════════════════╝${NC}\n"
+
+  echo -e "${CYAN}This installer will:${NC}"
+  echo -e "  ${GREEN}✓${NC} Download BitcoinII v29.0.0"
+  echo -e "  ${GREEN}✓${NC} Configure based on your system specs"
+  echo -e "  ${GREEN}✓${NC} Set up systemd service"
+  echo -e "  ${GREEN}✓${NC} Configure firewall (UFW)"
+  echo -e "  ${GREEN}✓${NC} Create global CLI access\n"
+
+  echo -ne "${BOLD}${CYAN}Ready to begin? [Y/n]: ${NC}"
+  read -r -t 30 CONFIRM || CONFIRM="Y"
+  if [[ "${CONFIRM,,}" == "n" ]]; then
+    echo -e "\n${YELLOW}Installation cancelled.${NC}\n"
+    exit 0
+  fi
 
   say "${BOLD}Preparing installation...${NC}"
   info "Creating directories at $DATADIR"
@@ -179,12 +277,27 @@ main() {
 
   say "${BOLD}Analyzing system resources...${NC}"
   calc_tunables
-  info "CPU Cores: ${CPU_CORES}"
-  info "Available RAM: ${MEM_AVAIL_MB} MB"
-  info "Available Disk: ${DISK_AVAIL_MB} MB"
-  success "System analysis complete"
+
+  echo -e "\n${BOLD}${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+  echo -e "${BOLD}${CYAN}           System Resources Detected${NC}"
+  echo -e "${BOLD}${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
+
+  echo -e "  ${CYAN}💻 CPU Cores:${NC}      ${BOLD}${CPU_CORES}${NC} cores"
+  echo -e "  ${CYAN}🧠 Total RAM:${NC}      ${BOLD}${MEM_TOTAL_MB}${NC} MB"
+  echo -e "  ${CYAN}📊 Available RAM:${NC}  ${BOLD}${MEM_AVAIL_MB}${NC} MB"
+  echo -e "  ${CYAN}💾 Available Disk:${NC} ${BOLD}$(( DISK_AVAIL_MB / 1024 ))${NC} GB\n"
+
+  echo -e "${BOLD}${GREEN}Optimized Settings:${NC}"
+  echo -e "  ${CYAN}•${NC} Database Cache: ${YELLOW}${DBCACHE} MB${NC}"
+  echo -e "  ${CYAN}•${NC} Memory Pool: ${YELLOW}${MAXMEMPOOL} MB${NC}"
+  echo -e "  ${CYAN}•${NC} CPU Threads: ${YELLOW}${PAR}${NC}"
+  echo -e "  ${CYAN}•${NC} Prune Size: ${YELLOW}${PRUNE_MB} MB${NC}\n"
+
+  echo -ne "${CYAN}Press Enter to continue...${NC}"
+  read -r -t 10
 
   prompt_mode
+  prompt_network_settings
 
   RPC_USER="bitcoinII"
   RPC_PASS="$(RAND 28)"
@@ -194,9 +307,6 @@ main() {
     cp -a "$CONF" "$CONF.bak.$(timestamp)"
     info "Backed up existing config to $CONF.bak.$(timestamp)"
   fi
-
-  # Local subnet
-  LOCAL_SUBNET="${LOCAL_SUBNET_DEFAULT}"
 
   # Generate config
   say "${BOLD}Generating optimized configuration...${NC}"
