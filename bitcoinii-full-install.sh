@@ -569,18 +569,39 @@ EOF
   # Configure UFW (allow SSH, P2P; restrict RPC/ZMQ to local subnet)
   say "${BOLD}Configuring firewall (UFW)...${NC}"
   if ! command -v ufw >/dev/null 2>&1; then
+    info "Installing UFW firewall..."
     if command -v apt-get >/dev/null 2>&1; then
       apt-get update -y && apt-get install -y ufw
     fi
   fi
+
+  info "Adding firewall rules:"
+
+  # SSH access
+  info "  • SSH (port 22) - open to all"
   ufw allow OpenSSH >/dev/null 2>&1 || true
   ufw allow 22/tcp >/dev/null 2>&1 || true
+
+  # P2P port
+  info "  • P2P (port ${P2P_PORT}) - open to all"
   ufw allow ${P2P_PORT}/tcp >/dev/null 2>&1 || true
+
+  # RPC port
+  info "  • RPC (port ${RPC_PORT}) - restricted to ${LOCAL_SUBNET}"
   ufw allow from ${LOCAL_SUBNET} to any port ${RPC_PORT} proto tcp >/dev/null 2>&1 || true
+
+  # ZMQ ports
+  info "  • ZMQ ports (${ZMQ_BLOCK_PORT}, ${ZMQ_HASHTX_PORT}, ${ZMQ_HASHBLOCK_PORT}) - restricted to ${LOCAL_SUBNET}"
   ufw allow from ${LOCAL_SUBNET} to any port ${ZMQ_BLOCK_PORT} proto tcp >/dev/null 2>&1 || true
   ufw allow from ${LOCAL_SUBNET} to any port ${ZMQ_HASHTX_PORT} proto tcp >/dev/null 2>&1 || true
   ufw allow from ${LOCAL_SUBNET} to any port ${ZMQ_HASHBLOCK_PORT} proto tcp >/dev/null 2>&1 || true
-  if ! ufw status | grep -q "Status: active"; then echo "y" | ufw enable >/dev/null; fi
+
+  # Enable firewall
+  if ! ufw status | grep -q "Status: active"; then
+    info "  • Enabling UFW firewall..."
+    echo "y" | ufw enable >/dev/null
+  fi
+
   success "Firewall configured and active"
 
   # Create CLI symlinks globally
