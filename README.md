@@ -17,33 +17,27 @@
 
 ---
 
-## 🚀 One-Command Installation
+## 🚀 Installation
 
-Simply copy and run this command in your terminal:
+Download and run the installer with these three commands:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/skaisser/bitcoinii-node-installer/main/bitcoinii-full-install.sh | sudo bash
+wget https://raw.githubusercontent.com/skaisser/bitcoinii-node-installer/main/bitcoinii-full-install.sh
+chmod +x bitcoinii-full-install.sh
+sudo ./bitcoinii-full-install.sh
 ```
 
-Or if you prefer `wget`:
+The smart installer will guide you through the configuration and handle everything automatically.
+
+### Non‑Interactive Installation
+For automated deployments, you can run without prompts:
 
 ```bash
-wget -qO- https://raw.githubusercontent.com/skaisser/bitcoinii-node-installer/main/bitcoinii-full-install.sh | sudo bash
-```
+# Mining node with auto-detected subnet
+sudo ./bitcoinii-full-install.sh --mode mining --subnet auto -y
 
-That's it! The smart installer will handle everything automatically.
-
-### Non‑Interactive Examples
-Run without prompts by passing flags after `-s --`:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/skaisser/bitcoinii-node-installer/main/bitcoinii-full-install.sh \
-  | sudo bash -s -- --mode mining --subnet auto -y
-```
-
-```bash
-wget -qO- https://raw.githubusercontent.com/skaisser/bitcoinii-node-installer/main/bitcoinii-full-install.sh \
-  | sudo bash -s -- --mode full --subnet local-only -y
+# Full node with local-only access
+sudo ./bitcoinii-full-install.sh --mode full --subnet local-only -y
 ```
 
 ## 🧠 Smart Installation Features
@@ -57,30 +51,27 @@ This is not just another installer script. Our **SMART Installer** automatically
 - **🔗 Installs global CLI access** - Creates symlinks in `/usr/local/bin` so you can run `bitcoinII-cli` from anywhere
 - **🎯 Avoids port conflicts** - Intelligently configures ports to avoid conflicts with Bitcoin Core or other services
 
-## 📦 Installation Options
+## 📦 What the Installer Does
 
-### Option 1: Full Automated Install (Recommended)
-The one-command installation above handles everything:
-- Downloads BitcoinII binaries
-- Configures based on your system specs
-- Sets up systemd service
-- Configures firewall
-- Creates CLI symlinks
+The installer will:
+1. Download BitcoinII v29.0.0 binaries
+2. Analyze your system resources (CPU, RAM, disk space)
+3. Configure optimal settings based on your hardware
+4. Set up systemd service for automatic startup
+5. Configure UFW firewall with appropriate rules
+6. Create global CLI commands (`bitcoinII-cli`)
+7. Display your RPC credentials (save these!)
 
-### Option 2: Manual Full Install
+During installation, you'll be prompted to choose:
+- **Node Type**: Mining Node (pruned) or Full Node (complete blockchain)
+- **Network Access**: Auto-detect subnet, custom subnet, or local-only
+
+### Alternative: Clone Repository
+If you prefer to clone the repository first:
 ```bash
 git clone https://github.com/skaisser/bitcoinii-node-installer
 cd bitcoinii-node-installer
-sudo bash bitcoinii-full-install.sh
-```
-Choose your node type when prompted:
-- **Mining Node** - Pruned blockchain, optimized for mining
-- **Full Node** - Complete blockchain with transaction indexing
-
-### Option 3: Configuration Only
-If you've already downloaded the binaries to `~/.bitcoinII`:
-```bash
-sudo bash bitcoinii-setup.sh
+sudo ./bitcoinii-full-install.sh
 ```
 
 ## 🖥️ System Requirements
